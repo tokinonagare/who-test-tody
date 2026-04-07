@@ -1,0 +1,15 @@
+services:
+  tester-bot:
+    build: .
+    container_name: tester-bot
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      # 挂载本地数据库文件，确保容器销毁后数据不丢失
+      - ./bot_data.db:/app/bot_data.db
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10mb"
+        max-file: "3"
