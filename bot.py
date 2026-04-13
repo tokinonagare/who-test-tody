@@ -37,7 +37,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/add <名字> - 添加测试人员\n"
         "/remove <名字> - 删除测试人员\n"
         "/status - 查看当前测试状态\n"
-        "/assign <人数> - 随机抽取指定人数进行测试\n"
+        "/groups - 查看分组名单\n"
+        "/setgroup <名字> <1-6> - 设置人员分组\n"
+        "/assign <人数> - 随机抽取指定人数进行测试（优先跨组）\n"
         "/set <名字> <1|0> - 手动设置某人的测试状态（1为已测，0为未测）"
     )
     await update.message.reply_text(help_text)
@@ -77,6 +79,46 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(msg)
 
+async def set_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) < 2:
+        await update.message.reply_text("用法: /setgroup <名字> <1-6>")
+        return
+    
+    name = context.args[0]
+    try:
+        group_id = int(context.args[1])
+        if not (1 <= group_id <= 6):
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("组号必须是 1 到 6 之间的整数。")
+        return
+
+    if db.set_group(name, group_id):
+        await update.message.reply_text(f"成功将 {name} 设置到第 {group_id} 组。")
+    else:
+        await update.message.reply_text(f"未找到测试人员: {name}")
+
+async def groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    testers = db.get_all_testers_with_group()
+    if not testers:
+        await update.message.reply_text("当前没有任何测试人员。")
+        return
+    
+    group_map = {i: [] for i in range(7)} # 0 为未分组，1-6 为指定组
+    for name, has_tested, group_id in testers:
+        status_icon = "✅" if has_tested else "⏳"
+        group_map[group_id].append(f"{status_icon} {name}")
+    
+    msg = "👥 **测试人员分组名单** 👥\n\n"
+    for i in range(1, 7):
+        members = group_map[i]
+        msg += f"📦 **第 {i} 组 ({len(members)}人)**:\n" + (", ".join(members) if members else "空") + "\n\n"
+    
+    if group_map[0]:
+        msg += "❓ **未分组人员**:\n" + ", ".join(group_map[0])
+    
+    await update.message.reply_text(msg)
+
 async def assign(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("用法: /assign <人数>")
@@ -100,32 +142,55 @@ async def assign(update: Update, context: ContextTypes.DEFAULT_TYPE):
     needed = count
 
     while needed > 0:
-        untested = db.get_untested()
-        # 排除本次已经选过的人，确保结果唯一性
-        selectable = [n for n in untested if n not in assigned_this_time]
+        untested_with_group = db.get_untested_with_group()
+        # 排除本次已经选过的人
+        selectable_pool = [t for t in untested_with_group if t[0] not in assigned_this_time]
         
-        if not selectable:
-            # 如果当前轮次没有可选人员了
-            # 可能是所有人都在数据库中标记为已测，或者本次 assign 已经把所有标记为未测的人选完了
+        if not selectable_pool:
             db.reset_all_status()
             await update.message.reply_text("🔁 所有人均已被分配过，触发全员重置机制！")
-            
             # 重置后，所有人都是未测。再次过滤掉本次 assign 已经选过的人
-            selectable = [n for n in all_names if n not in assigned_this_time]
+            all_testers_with_group = db.get_all_testers_with_group()
+            selectable_pool = [t for t in all_testers_with_group if t[0] not in assigned_this_time]
             
-            # 如果还是没有可选的（说明 count > 总池子人数），则允许重复
-            if not selectable:
-                selectable = all_names
+            if not selectable_pool:
+                # 极端情况：count > 总人数
+                selectable_pool = all_testers_with_group
             
-        available = len(selectable)
-        to_pick_now = min(needed, available)
+        # 按组分类
+        group_to_members = {}
+        for name, group_id in [(t[0], t[1] if len(t)>1 else 0) for t in selectable_pool]:
+            if group_id not in group_to_members:
+                group_to_members[group_id] = []
+            group_to_members[group_id].append(name)
         
-        chosen = random.sample(selectable, to_pick_now)
-        # 标记抽出的人为已测
-        db.set_tested_status(chosen, 1)
+        # 跨组轮询抽取
+        groups_list = list(group_to_members.keys())
+        random.shuffle(groups_list)
         
-        assigned_this_time.extend(chosen)
-        needed -= to_pick_now
+        # 只要还需要人，并且还有组可选
+        group_exhausted = False
+        while needed > 0 and not group_exhausted:
+            group_exhausted = True
+            # 打乱组顺序，确保公平性
+            current_groups = list(groups_list)
+            random.shuffle(current_groups)
+            
+            for g_id in current_groups:
+                if needed <= 0: break
+                
+                members = group_to_members[g_id]
+                if members:
+                    # 从该组随机选一个
+                    chosen_one = random.choice(members)
+                    assigned_this_time.append(chosen_one)
+                    members.remove(chosen_one)
+                    db.set_tested_status([chosen_one], 1)
+                    needed -= 1
+                    group_exhausted = False # 只要这一轮有组还能抽，就没耗尽
+                else:
+                    if g_id in groups_list:
+                        groups_list.remove(g_id)
 
     await update.message.reply_text(f"🎲 抽取的测试人员 ({count}人): " + ", ".join(assigned_this_time))
     
@@ -171,6 +236,8 @@ def main():
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("remove", remove))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("groups", groups))
+    app.add_handler(CommandHandler("setgroup", set_group))
     app.add_handler(CommandHandler("assign", assign))
     app.add_handler(CommandHandler("set", set_status))
     
