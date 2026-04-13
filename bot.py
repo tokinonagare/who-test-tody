@@ -105,7 +105,7 @@ async def groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     group_map = {i: [] for i in range(7)} # 0 为未分组，1-6 为指定组
-    for name, has_tested, group_id in testers:
+    for name, has_tested, group_id, last_tested_at in testers:
         status_icon = "✅" if has_tested else "⏳"
         group_map[group_id].append(f"{status_icon} {name}")
     
