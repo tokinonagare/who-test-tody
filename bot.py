@@ -181,8 +181,8 @@ async def assign(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 members = group_to_members[g_id]
                 if members:
-                    # 从该组随机选一个
-                    chosen_one = random.choice(members)
+                    # 从该组取第一个（最久未测的那个）
+                    chosen_one = members[0]
                     assigned_this_time.append(chosen_one)
                     members.remove(chosen_one)
                     db.set_tested_status([chosen_one], 1)
