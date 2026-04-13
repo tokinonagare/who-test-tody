@@ -38,6 +38,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/remove <名字> - 删除测试人员\n"
         "/status - 查看当前测试状态\n"
         "/groups - 查看分组名单\n"
+        "/times - 查看历史测试时间\n"
         "/setgroup <名字> <1-6> - 设置人员分组\n"
         "/assign <人数> - 随机抽取指定人数进行测试（优先跨组）\n"
         "/set <名字> <1|0> - 手动设置某人的测试状态（1为已测，0为未测）"
@@ -118,6 +119,23 @@ async def groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += "❓ **未分组人员**:\n" + ", ".join(group_map[0])
     
     await update.message.reply_text(msg)
+
+async def times(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    testers = db.get_all_testers_with_group()
+    if not testers:
+        await update.message.reply_text("当前没有任何测试人员。")
+        return
+    
+    # 按时间排序展示（最久未测的在前）
+    # 数据库结果已经包含 (name, has_tested, group_id, last_tested_at)
+    sorted_testers = sorted(testers, key=lambda x: x[3] if x[3] else "0000-00-00")
+    
+    msg = "🕒 **测试时间记录 (由远及近)** 🕒\n\n"
+    for name, has_tested, group_id, last_tested_at in sorted_testers:
+        time_display = f"`{last_tested_at[:16]}`" if last_tested_at else "从未测试"
+        msg += f"👤 {name}: {time_display}\n"
+    
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def assign(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -237,6 +255,7 @@ def main():
     app.add_handler(CommandHandler("remove", remove))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("groups", groups))
+    app.add_handler(CommandHandler("times", times))
     app.add_handler(CommandHandler("setgroup", set_group))
     app.add_handler(CommandHandler("assign", assign))
     app.add_handler(CommandHandler("set", set_status))
