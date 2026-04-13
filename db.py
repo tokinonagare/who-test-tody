@@ -96,7 +96,8 @@ def set_tested_status(names, status):
         # 如果标记为已测，更新最后测试时间为当前 UTC 时间
         cursor.execute(f"UPDATE testers SET has_tested = ?, last_tested_at = datetime('now') WHERE name IN ({placeholders})", (status, *names))
     else:
-        cursor.execute(f"UPDATE testers SET has_tested = ? WHERE name IN ({placeholders})", (status, *names))
+        # 如果标记为未测，清空最后测试时间
+        cursor.execute(f"UPDATE testers SET has_tested = ?, last_tested_at = NULL WHERE name IN ({placeholders})", (status, *names))
     conn.commit()
     conn.close()
 
