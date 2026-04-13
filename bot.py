@@ -95,35 +95,32 @@ async def assign(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("当前名单为空，请先使用 /add 添加人员。")
         return
 
+    all_names = [t[0] for t in all_testers]
     assigned_this_time = []
     needed = count
 
     while needed > 0:
         untested = db.get_untested()
+        # 排除本次已经选过的人，确保结果唯一性
+        selectable = [n for n in untested if n not in assigned_this_time]
         
-        # 如果当前没有未测试的人，触发重置机制
-        if not untested:
-            # 将刚刚选出的人临时锁定，防止在同一轮请求中再次被立刻选出（除非人数真的不够）
+        if not selectable:
+            # 如果当前轮次没有可选人员了
+            # 可能是所有人都在数据库中标记为已测，或者本次 assign 已经把所有标记为未测的人选完了
             db.reset_all_status()
-            
-            if assigned_this_time:
-                # 把本次刚抽到的先标记为已测
-                db.set_tested_status(assigned_this_time, 1)
-            
-            untested = db.get_untested()
-            
-            # 如果依然没有未测试的，说明需要的总人数远远超出了总池子人数并且把所有人都抽了一遍
-            # 这个时候我们直接完全重置，不受约束地再次抽取
-            if not untested:
-                db.reset_all_status()
-                untested = db.get_untested()
-            
             await update.message.reply_text("🔁 所有人均已被分配过，触发全员重置机制！")
             
-        available = len(untested)
+            # 重置后，所有人都是未测。再次过滤掉本次 assign 已经选过的人
+            selectable = [n for n in all_names if n not in assigned_this_time]
+            
+            # 如果还是没有可选的（说明 count > 总池子人数），则允许重复
+            if not selectable:
+                selectable = all_names
+            
+        available = len(selectable)
         to_pick_now = min(needed, available)
         
-        chosen = random.sample(untested, to_pick_now)
+        chosen = random.sample(selectable, to_pick_now)
         # 标记抽出的人为已测
         db.set_tested_status(chosen, 1)
         
